@@ -33,7 +33,7 @@ streamlit run app.py
 
 Use the UI to:
 - Select symbol (`BTC-USD` or `BNB-USD`).
-- Choose lookback window (1/3/5/10 years).
+- Choose lookback window (`1M`, `3M`, `6M`, `1Y`, `3Y`, `5Y`, `10Y`).
 - Adjust RSI length and buy amounts.
 - Enable/disable News Sentiment strategy for comparison.
 - Match monthly budgets across all strategies for fair ROI comparison.

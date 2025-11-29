@@ -29,6 +29,9 @@ def fetch_btc_history(start: str, end: str, symbol: str = 'BTC-USD') -> pd.DataF
         df['Adj_Close'] = df['Close']
     df = df[['Open', 'High', 'Low', 'Close', 'Adj_Close', 'Volume']]
     df.index = pd.to_datetime(df.index)
+    # Ensure timezone-naive index to avoid Period conversion warnings
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_localize(None)
     return df
 
 
@@ -42,6 +45,8 @@ def compute_rsi(df: pd.DataFrame, length: int = 14) -> pd.DataFrame:
 def simulate_sip(df: pd.DataFrame, monthly_amount: float = 100.0) -> PortfolioState:
     # Buy on the 1st of every month at close price of that day (or next trading day if missing)
     df = df.copy()
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_localize(None)
     df['Month'] = df.index.to_period('M')
 
     # Identify first trading day per month
@@ -94,6 +99,8 @@ def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0, sym
     """
     df = df.copy()
     df['Sentiment'] = simulate_news_sentiment(df, symbol, use_real_news)
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_localize(None)
     df['Month'] = df.index.to_period('M')
     
     # Initialize buy amounts per day
@@ -202,7 +209,7 @@ def plot_portfolio_values(sip: PortfolioState, agent: PortfolioState, news: Port
     plt.show()
 
 
-def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
+def run_backtest(symbol: str = 'BTC-USD', years: float = 10.0, rsi_length: int = 14,
                  sip_amount: float = 100.0,
                  agent_buy_low: float = 150.0,
                  agent_buy_normal: float = 100.0,
@@ -228,6 +235,8 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
 
     if equal_monthly_budget:
         # Constrain agent's monthly spend to equal SIP amount
+        if getattr(df_agent.index, 'tz', None) is not None:
+            df_agent.index = df_agent.index.tz_localize(None)
         df_agent['Month'] = df_agent.index.to_period('M')
         # Compute scaling per month so total spend equals sip_amount
         def scale_month(group: pd.DataFrame) -> pd.DataFrame:
@@ -263,7 +272,7 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
 
 
 def main():
-    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10, include_news_strategy=True, use_real_news=True)
+    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10.0, include_news_strategy=True, use_real_news=True)
     print('\nBacktest Summary (Last 10 Years)')
     print(summary.to_string(index=False))
     plot_portfolio_values(sip, agent, news)

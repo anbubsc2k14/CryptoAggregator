@@ -8,13 +8,15 @@ st.set_page_config(page_title="Crypto Backtester", layout="wide")
 st.title("Crypto DCA Backtester")
 st.caption("Compare SIP vs RSI-based DCA vs News Sentiment DCA")
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     symbol = st.selectbox("Symbol", options=["BTC-USD", "BNB-USD"], index=0)
 with col2:
-    years = st.selectbox("Lookback (years)", options=[1, 3, 5, 10], index=3)
+    lookback_label = st.selectbox("Lookback", options=["1M","3M","6M","1Y","3Y","5Y","10Y"], index=6)
 with col3:
     rsi_length = st.number_input("RSI Length", min_value=2, max_value=50, value=14)
+with col4:
+    st.caption("1M≈30d, fractional years supported")
 
 st.subheader("Strategy Parameters")
 col4, col5, col6 = st.columns(3)
@@ -27,23 +29,26 @@ with col6:
 
 equal_budget = st.checkbox("Match SIP monthly budget for Agentic strategy", value=True)
 include_news = st.checkbox("Include News Sentiment strategy", value=True)
-use_real_news = st.checkbox("Use real news APIs (requires API keys)", value=False)
+use_real_news = st.checkbox("Use real news (CryptoCompare works without keys)", value=False)
 
 if use_real_news:
-    with st.expander("API Key Configuration"):
-        st.info("Set environment variables: CRYPTOPANIC_API_KEY and/or NEWSAPI_API_KEY")
-        st.code("export CRYPTOPANIC_API_KEY='your_key_here'\nexport NEWSAPI_API_KEY='your_key_here'")
-        st.markdown("Get free API keys:")
-        st.markdown("- [CryptoPanic](https://cryptopanic.com/developers/api/)")
-        st.markdown("- [NewsAPI](https://newsapi.org/)")
+    with st.expander("News Providers & API Keys"):
+        st.success("CryptoCompare works immediately with no API key.")
+        st.markdown("Optional keys to add more sources:")
+        st.code("export COINMARKETCAP_API_KEY='your_key'\nexport CRYPTOPANIC_API_KEY='your_key'\nexport NEWSAPI_API_KEY='your_key'")
+        st.markdown("- [CoinMarketCap](https://coinmarketcap.com/api/) — 10,000 req/month")
+        st.markdown("- [CryptoPanic](https://cryptopanic.com/developers/api/) — limited free tier")
+        st.markdown("- [NewsAPI](https://newsapi.org/) — 100 req/day, 30-day history")
 
 run = st.button("Run Backtest")
 
 if run:
     try:
+        LOOKBACK_MAP = {"1M": 1/12, "3M": 3/12, "6M": 6/12, "1Y":1.0, "3Y":3.0, "5Y":5.0, "10Y":10.0}
+        years_float = LOOKBACK_MAP.get(lookback_label, 1.0)
         summary, sip, agent, news = run_backtest(
             symbol=symbol,
-            years=int(years),
+            years=years_float,
             rsi_length=int(rsi_length),
             sip_amount=float(sip_amount),
             agent_buy_low=float(agent_buy_low),
@@ -78,5 +83,6 @@ Notes:
 - RSI computed using pandas_ta; default length 14.
 - SIP buys run on first trading day each month; RSI agent buys evaluated daily at close.
 - News Sentiment strategy can use real news from CryptoPanic/NewsAPI (requires API keys) or simulate sentiment from price momentum.
+ - News Sentiment strategy can use real news from CryptoCompare (no key), CoinMarketCap (with key), CryptoPanic/NewsAPI (optional), or simulate sentiment from price momentum.
 - TextBlob is used for sentiment analysis of news headlines.
 """)

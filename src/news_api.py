@@ -23,6 +23,11 @@ class NewsAPIClient:
         Free tier: 10,000 requests/month (333/day)
         Sign up: https://coinmarketcap.com/api/
         """
+        # Normalize incoming datetimes to naive (drop tz) for uniform comparisons
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
         if not self.coinmarketcap_key:
             return pd.DataFrame()
     
@@ -64,6 +69,10 @@ class NewsAPIClient:
         Free tier: 100,000 requests/month (completely free, no key required for news!)
         Docs: https://min-api.cryptocompare.com/
         """
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
         coin = symbol.split('-')[0]
         news_list = []
         
@@ -81,7 +90,7 @@ class NewsAPIClient:
             if response.status_code == 200:
                 data = response.json()
                 for item in data.get('Data', []):
-                    pub_date = pd.to_datetime(item.get('published_on'), unit='s')
+                    pub_date = pd.to_datetime(item.get('published_on'), unit='s', utc=True).tz_localize(None)
                     if start_date <= pub_date <= end_date:
                         news_list.append({
                             'date': pub_date,
@@ -99,6 +108,10 @@ class NewsAPIClient:
         Fetch news from CryptoPanic API.
         Free tier: 100 requests/day
         """
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
         if not self.cryptopanic_key:
             return pd.DataFrame()
         
@@ -154,6 +167,10 @@ class NewsAPIClient:
         Fetch news from NewsAPI.
         Free tier: 100 requests/day, max 1 month history
         """
+        if start_date.tzinfo is not None:
+            start_date = start_date.replace(tzinfo=None)
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
         if not self.newsapi_key:
             return pd.DataFrame()
         
@@ -251,6 +268,10 @@ def compute_news_sentiment_series(price_df: pd.DataFrame, symbol: str, use_real_
     if use_real_news and (client.coinmarketcap_key or client.cryptocompare_key or client.cryptopanic_key or client.newsapi_key):
         start = price_df.index[0].to_pydatetime()
         end = price_df.index[-1].to_pydatetime()
+        if start.tzinfo is not None:
+            start = start.replace(tzinfo=None)
+        if end.tzinfo is not None:
+            end = end.replace(tzinfo=None)
         
         print(f"Fetching real news for {symbol} from {start.date()} to {end.date()}...")
         news_df = client.fetch_all_news(symbol, start, end)

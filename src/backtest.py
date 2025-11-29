@@ -7,6 +7,8 @@ import pandas_ta as ta
 import matplotlib.pyplot as plt
 from textblob import TextBlob
 import random
+import os
+from src.news_api import compute_news_sentiment_series
 
 
 @dataclass
@@ -73,24 +75,15 @@ def simulate_agentic_dca(df: pd.DataFrame) -> PortfolioState:
     return PortfolioState(cash_invested=float(cash_invested), btc_accumulated=float(btc_accumulated.iloc[-1]), value_series=value_series)
 
 
-def simulate_news_sentiment(df: pd.DataFrame) -> pd.Series:
+def simulate_news_sentiment(df: pd.DataFrame, symbol: str = 'BTC-USD', use_real_news: bool = True) -> pd.Series:
     """
-    Simulate news sentiment based on price momentum.
-    In production, this would fetch real news headlines and analyze sentiment.
-    Positive sentiment correlates with price increases; negative with decreases.
+    Compute news sentiment from real news APIs or fallback to price momentum simulation.
     Returns a sentiment score between -1 (very negative) and 1 (very positive).
     """
-    # Calculate 7-day momentum as proxy for sentiment
-    returns = df['Adj_Close'].pct_change(7)
-    # Normalize to -1 to 1 range with some noise
-    sentiment = returns.clip(-0.15, 0.15) / 0.15
-    # Add random noise to simulate real news variability
-    noise = pd.Series([random.gauss(0, 0.2) for _ in range(len(df))], index=df.index)
-    sentiment = (sentiment + noise).clip(-1, 1)
-    return sentiment
+    return compute_news_sentiment_series(df, symbol, use_real_news)
 
 
-def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0) -> PortfolioState:
+def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0, symbol: str = 'BTC-USD', use_real_news: bool = True) -> PortfolioState:
     """
     News-based strategy: Buy on positive sentiment, hold on neutral, sell partial position on very negative.
     - Sentiment > 0.3: Buy aggressively
@@ -100,7 +93,7 @@ def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0) -> 
     Monthly budget is allocated across trading days based on sentiment signals.
     """
     df = df.copy()
-    df['Sentiment'] = simulate_news_sentiment(df)
+    df['Sentiment'] = simulate_news_sentiment(df, symbol, use_real_news)
     df['Month'] = df.index.to_period('M')
     
     # Initialize buy amounts per day
@@ -214,7 +207,8 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
                  agent_buy_low: float = 150.0,
                  agent_buy_normal: float = 100.0,
                  equal_monthly_budget: bool = False,
-                 include_news_strategy: bool = False) -> tuple[pd.DataFrame, PortfolioState, PortfolioState, PortfolioState | None]:
+                 include_news_strategy: bool = False,
+                 use_real_news: bool = True) -> tuple[pd.DataFrame, PortfolioState, PortfolioState, PortfolioState | None]:
     end = dt.date.today()
     start = end - dt.timedelta(days=int(years * 365 + 5))
 
@@ -262,14 +256,14 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
     # News-based strategy
     news = None
     if include_news_strategy:
-        news = simulate_news_based_dca(df, monthly_budget=sip_amount)
+        news = simulate_news_based_dca(df, monthly_budget=sip_amount, symbol=symbol, use_real_news=use_real_news)
     
     summary = summary_table(sip, agent, news)
     return summary, sip, agent, news
 
 
 def main():
-    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10, include_news_strategy=True)
+    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10, include_news_strategy=True, use_real_news=True)
     print('\nBacktest Summary (Last 10 Years)')
     print(summary.to_string(index=False))
     plot_portfolio_values(sip, agent, news)

@@ -38,8 +38,18 @@ Use the UI to:
 - Enable/disable News Sentiment strategy for comparison.
 - Match monthly budgets across all strategies for fair ROI comparison.
 
+## Real News Integration
+
+The system supports fetching real cryptocurrency news from:
+- **CryptoPanic**: Crypto-specific news aggregator
+- **NewsAPI**: General news including crypto
+
+See [API_KEYS.md](API_KEYS.md) for setup instructions.
+
+Without API keys, the system falls back to simulating sentiment from price momentum.
+
 ## Notes
 - Data is fetched from Yahoo Finance (`BTC-USD`), using adjusted close prices for calculations.
 - RSI is computed with period 14 via `pandas_ta`.
 - Max drawdown is computed from the equity curve as the minimum percentage drawdown from the running peak.
-- News Sentiment strategy uses price momentum as a proxy for sentiment in this demo. In production, integrate real news APIs (CryptoPanic, NewsAPI) with TextBlob or transformer-based sentiment models.
+- News Sentiment strategy uses TextBlob for sentiment analysis of real news headlines, or falls back to price momentum simulation.

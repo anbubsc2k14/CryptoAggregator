@@ -27,6 +27,15 @@ with col6:
 
 equal_budget = st.checkbox("Match SIP monthly budget for Agentic strategy", value=True)
 include_news = st.checkbox("Include News Sentiment strategy", value=True)
+use_real_news = st.checkbox("Use real news APIs (requires API keys)", value=False)
+
+if use_real_news:
+    with st.expander("API Key Configuration"):
+        st.info("Set environment variables: CRYPTOPANIC_API_KEY and/or NEWSAPI_API_KEY")
+        st.code("export CRYPTOPANIC_API_KEY='your_key_here'\nexport NEWSAPI_API_KEY='your_key_here'")
+        st.markdown("Get free API keys:")
+        st.markdown("- [CryptoPanic](https://cryptopanic.com/developers/api/)")
+        st.markdown("- [NewsAPI](https://newsapi.org/)")
 
 run = st.button("Run Backtest")
 
@@ -41,6 +50,7 @@ if run:
             agent_buy_normal=float(agent_buy_normal),
             equal_monthly_budget=bool(equal_budget),
             include_news_strategy=bool(include_news),
+            use_real_news=bool(use_real_news),
         )
         st.success("Backtest completed")
         st.subheader("Summary")
@@ -66,6 +76,7 @@ st.markdown("""
 Notes:
 - Data source: Yahoo Finance via yfinance.
 - RSI computed using pandas_ta; default length 14.
- - SIP buys run on first trading day each month; RSI agent buys evaluated daily at close.
- - News Sentiment strategy simulates news-based trading (uses price momentum as proxy for sentiment in this demo).
+- SIP buys run on first trading day each month; RSI agent buys evaluated daily at close.
+- News Sentiment strategy can use real news from CryptoPanic/NewsAPI (requires API keys) or simulate sentiment from price momentum.
+- TextBlob is used for sentiment analysis of news headlines.
 """)

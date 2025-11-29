@@ -40,11 +40,16 @@ Use the UI to:
 
 ## Real News Integration
 
-The system supports fetching real cryptocurrency news from:
-- **CryptoPanic**: Crypto-specific news aggregator
-- **NewsAPI**: General news including crypto
+The system supports fetching real cryptocurrency news from multiple providers:
+- **CryptoCompare** (Recommended - FREE, no key required!): 100,000 requests/month
+- **CoinMarketCap** (Best free tier with key): 10,000 requests/month
+- **CryptoPanic**: Crypto-specific aggregator (limited free tier)
+- **NewsAPI**: General news including crypto (limited history)
 
 See [API_KEYS.md](API_KEYS.md) for setup instructions.
+**Quick Start**: CryptoCompare works immediately without any configuration!
+Just check "Use Real News" in the dashboard and it will fetch live crypto news automatically.
+
 
 Without API keys, the system falls back to simulating sentiment from price momentum.
 

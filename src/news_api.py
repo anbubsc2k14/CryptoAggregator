@@ -140,27 +140,34 @@ class NewsAPIClient:
                 'public': 'true'
             }
             
-            try:
-                response = requests.get(url, params=params, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    for item in data.get('results', []):
-                        pub_date = pd.to_datetime(item['published_at'], errors='coerce')
-                        if pub_date is None or pd.isna(pub_date):
-                            continue
-                        if getattr(pub_date, 'tzinfo', None) is not None:
-                            pub_date = pub_date.tz_localize(None)
-                        news_list.append({
-                            'date': pub_date,
-                            'title': item['title'],
-                            'body': '',
-                            'source': 'CryptoPanic'
-                        })
-                    self.cache[cache_key] = data.get('results', [])
-                time.sleep(1)  # Rate limiting
-            except Exception as e:
-                print(f"CryptoPanic API error: {e}")
-                break
+            # Add simple retries with exponential backoff
+            for attempt in range(3):
+                try:
+                    response = requests.get(url, params=params, timeout=20)
+                    if response.status_code == 200:
+                        data = response.json()
+                        for item in data.get('results', []):
+                            pub_date = pd.to_datetime(item.get('published_at'), errors='coerce')
+                            if pub_date is None or pd.isna(pub_date):
+                                continue
+                            if getattr(pub_date, 'tzinfo', None) is not None:
+                                pub_date = pub_date.tz_localize(None)
+                            if start_date <= pub_date <= end_date:
+                                news_list.append({
+                                    'date': pub_date,
+                                    'title': item.get('title', ''),
+                                    'body': '',
+                                    'source': 'CryptoPanic'
+                                })
+                        # Cache results for the day
+                        self.cache[cache_key] = data.get('results', [])
+                        break
+                    else:
+                        time.sleep(1 * (attempt + 1))
+                except Exception as e:
+                    if attempt == 2:
+                        print(f"CryptoPanic API error: {e}")
+                    time.sleep(1 * (attempt + 1))
             
             current += timedelta(days=1)
         

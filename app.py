@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Crypto Backtester", layout="wide")
 
 st.title("Crypto DCA Backtester")
-st.caption("Compare SIP vs RSI-based DCA vs News Sentiment DCA")
+st.caption("Compare SIP vs RSI-based DCA vs News Sentiment DCA vs SMA200 Trend vs RSI Buy/Sell")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -29,6 +29,8 @@ with col6:
 
 equal_budget = st.checkbox("Match SIP monthly budget for Agentic strategy", value=True)
 include_news = st.checkbox("Include News Sentiment strategy", value=True)
+include_sma200 = st.checkbox("Include SMA200 Trend strategy", value=True)
+include_rsi_buy_sell = st.checkbox("Include RSI Buy/Sell strategy", value=True)
 use_real_news = st.checkbox("Use real news (CryptoCompare works without keys)", value=False)
 
 if use_real_news:
@@ -46,7 +48,7 @@ if run:
     try:
         LOOKBACK_MAP = {"1M": 1/12, "3M": 3/12, "6M": 6/12, "1Y":1.0, "3Y":3.0, "5Y":5.0, "10Y":10.0}
         years_float = LOOKBACK_MAP.get(lookback_label, 1.0)
-        summary, sip, agent, news = run_backtest(
+        summary, strategies = run_backtest(
             symbol=symbol,
             years=years_float,
             rsi_length=int(rsi_length),
@@ -56,6 +58,8 @@ if run:
             equal_monthly_budget=bool(equal_budget),
             include_news_strategy=bool(include_news),
             use_real_news=bool(use_real_news),
+            include_sma200=bool(include_sma200),
+            include_rsi_buy_sell=bool(include_rsi_buy_sell),
         )
         st.success("Backtest completed")
         st.subheader("Summary")
@@ -63,10 +67,8 @@ if run:
 
         st.subheader("Portfolio Value Over Time")
         fig, ax = plt.subplots(figsize=(12, 5))
-        ax.plot(sip.value_series.index, sip.value_series.values, label='Benchmark SIP', linewidth=1.5)
-        ax.plot(agent.value_series.index, agent.value_series.values, label='RSI-Based DCA', linewidth=1.5)
-        if news is not None:
-            ax.plot(news.value_series.index, news.value_series.values, label='News Sentiment DCA', linewidth=1.5)
+        for name, state in strategies.items():
+            ax.plot(state.value_series.index, state.value_series.values, label=name, linewidth=1.5)
         ax.set_title(f'Portfolio Value Over Time ({symbol})')
         ax.set_xlabel('Date')
         ax.set_ylabel('Portfolio Value ($)')

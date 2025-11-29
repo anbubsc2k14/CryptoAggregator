@@ -41,6 +41,12 @@ def compute_rsi(df: pd.DataFrame, length: int = 14) -> pd.DataFrame:
     df['RSI'] = rsi
     return df
 
+def compute_sma(df: pd.DataFrame, length: int = 200) -> pd.DataFrame:
+    sma = df['Adj_Close'].rolling(window=length, min_periods=1).mean()
+    df = df.copy()
+    df['SMA'] = sma
+    return df
+
 
 def simulate_sip(df: pd.DataFrame, monthly_amount: float = 100.0) -> PortfolioState:
     # Buy on the 1st of every month at close price of that day (or next trading day if missing)
@@ -153,6 +159,84 @@ def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0, sym
         value_series=value_series
     )
 
+def simulate_sma_trend(df: pd.DataFrame, monthly_budget: float = 100.0, sma_length: int = 200) -> PortfolioState:
+    """
+    Invest only on days where price > SMA(length). Monthly budget is distributed evenly across such days.
+    """
+    df = compute_sma(df, length=sma_length)
+    df = df.copy()
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_localize(None)
+    df['Month'] = df.index.to_period('M')
+
+    df['Buy_USD'] = 0.0
+    df.loc[df['Adj_Close'] > df['SMA'], 'Buy_USD'] = 1.0
+
+    def scale_month(group: pd.DataFrame) -> pd.DataFrame:
+        total_weight = group['Buy_USD'].sum()
+        if total_weight <= 0:
+            if len(group) > 0:
+                group.at[group.index[0], 'Buy_USD'] = monthly_budget
+            return group
+        group['Buy_USD'] = (group['Buy_USD'] / total_weight) * monthly_budget
+        return group
+
+    df = df.groupby('Month', group_keys=False).apply(scale_month, include_groups=False)
+
+    btc_bought = df['Buy_USD'] / df['Adj_Close']
+    btc_accumulated = btc_bought.cumsum()
+    value_series = btc_accumulated * df['Adj_Close']
+    cash_invested = df['Buy_USD'].sum()
+    return PortfolioState(cash_invested=float(cash_invested), btc_accumulated=float(btc_accumulated.iloc[-1]), value_series=value_series)
+
+def simulate_rsi_buy_sell(df: pd.DataFrame, monthly_budget: float = 100.0, rsi_length: int = 14, sell_fraction: float = 0.2) -> PortfolioState:
+    """
+    Buy when RSI < 30 (oversold), normal allocation when 30<=RSI<=50, and sell fraction when RSI > 70.
+    Monthly budget is distributed across buy signals; sells add to cash_reserve (not negative invested).
+    """
+    df = compute_rsi(df, length=rsi_length)
+    df = df.copy()
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_localize(None)
+    df['Month'] = df.index.to_period('M')
+
+    df['Buy_USD'] = 0.0
+    df.loc[df['RSI'] < 30, 'Buy_USD'] = 2.0
+    df.loc[(df['RSI'] >= 30) & (df['RSI'] <= 50), 'Buy_USD'] = 1.0
+
+    def scale_month(group: pd.DataFrame) -> pd.DataFrame:
+        total_weight = group['Buy_USD'].sum()
+        if total_weight <= 0:
+            if len(group) > 0:
+                group.at[group.index[0], 'Buy_USD'] = monthly_budget
+            return group
+        group['Buy_USD'] = (group['Buy_USD'] / total_weight) * monthly_budget
+        return group
+
+    df = df.groupby('Month', group_keys=False).apply(scale_month, include_groups=False)
+
+    btc_holdings = 0.0
+    cash_invested_total = 0.0
+    cash_reserve = 0.0
+    portfolio_values = []
+
+    for idx, row in df.iterrows():
+        # buys
+        buy_amount = row['Buy_USD']
+        if buy_amount > 0:
+            btc_bought = buy_amount / row['Adj_Close']
+            btc_holdings += btc_bought
+            cash_invested_total += buy_amount
+        # sells
+        if row['RSI'] > 70 and btc_holdings > 0:
+            to_sell = btc_holdings * sell_fraction
+            cash_reserve += to_sell * row['Adj_Close']
+            btc_holdings -= to_sell
+        portfolio_values.append(btc_holdings * row['Adj_Close'] + cash_reserve)
+
+    value_series = pd.Series(portfolio_values, index=df.index)
+    return PortfolioState(cash_invested=float(cash_invested_total), btc_accumulated=float(btc_holdings), value_series=value_series)
+
 
 def max_drawdown(series: pd.Series) -> float:
     # Max drawdown as percentage
@@ -193,6 +277,27 @@ def summary_table(sip: PortfolioState, agent: PortfolioState, news: PortfolioSta
     
     return pd.DataFrame(data)
 
+def summary_table_extended(strategies: dict[str, PortfolioState]) -> pd.DataFrame:
+    data = {
+        'Strategy': [],
+        'Total Invested ($)': [],
+        'BTC Accumulated': [],
+        'Current Value ($)': [],
+        'ROI (%)': [],
+        'Max Drawdown (%)': [],
+    }
+    for name, state in strategies.items():
+        latest = state.value_series.iloc[-1]
+        roi = ((latest - state.cash_invested) / state.cash_invested) * 100.0 if state.cash_invested > 0 else 0.0
+        mdd = max_drawdown(state.value_series)
+        data['Strategy'].append(name)
+        data['Total Invested ($)'].append(round(state.cash_invested, 2))
+        data['BTC Accumulated'].append(round(state.btc_accumulated, 8))
+        data['Current Value ($)'].append(round(latest, 2))
+        data['ROI (%)'].append(round(roi, 2))
+        data['Max Drawdown (%)'].append(round(mdd, 2))
+    return pd.DataFrame(data)
+
 
 def plot_portfolio_values(sip: PortfolioState, agent: PortfolioState, news: PortfolioState | None = None) -> None:
     plt.figure(figsize=(12, 6))
@@ -213,9 +318,11 @@ def run_backtest(symbol: str = 'BTC-USD', years: float = 10.0, rsi_length: int =
                  sip_amount: float = 100.0,
                  agent_buy_low: float = 150.0,
                  agent_buy_normal: float = 100.0,
-                 equal_monthly_budget: bool = False,
+                 equal_monthly_budget: bool = True,
                  include_news_strategy: bool = False,
-                 use_real_news: bool = True) -> tuple[pd.DataFrame, PortfolioState, PortfolioState, PortfolioState | None]:
+                 use_real_news: bool = True,
+                 include_sma200: bool = False,
+                 include_rsi_buy_sell: bool = False) -> tuple[pd.DataFrame, dict[str, PortfolioState]]:
     end = dt.date.today()
     start = end - dt.timedelta(days=int(years * 365 + 5))
 
@@ -262,20 +369,25 @@ def run_backtest(symbol: str = 'BTC-USD', years: float = 10.0, rsi_length: int =
         value_series=btc_accumulated * df_agent['Adj_Close']
     )
 
-    # News-based strategy
-    news = None
+    strategies = {
+        'Benchmark SIP': sip,
+        'RSI-Based DCA': agent,
+    }
     if include_news_strategy:
-        news = simulate_news_based_dca(df, monthly_budget=sip_amount, symbol=symbol, use_real_news=use_real_news)
-    
-    summary = summary_table(sip, agent, news)
-    return summary, sip, agent, news
+        strategies['News Sentiment DCA'] = simulate_news_based_dca(df, monthly_budget=sip_amount, symbol=symbol, use_real_news=use_real_news)
+    if include_sma200:
+        strategies['SMA200 Trend'] = simulate_sma_trend(df, monthly_budget=sip_amount, sma_length=200)
+    if include_rsi_buy_sell:
+        strategies['RSI Buy/Sell'] = simulate_rsi_buy_sell(df, monthly_budget=sip_amount, rsi_length=rsi_length, sell_fraction=0.2)
+
+    summary = summary_table_extended(strategies)
+    return summary, strategies
 
 
 def main():
-    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10.0, include_news_strategy=True, use_real_news=True)
+    summary, strategies = run_backtest(symbol='BTC-USD', years=10.0, include_news_strategy=True, use_real_news=True, include_sma200=True, include_rsi_buy_sell=True)
     print('\nBacktest Summary (Last 10 Years)')
     print(summary.to_string(index=False))
-    plot_portfolio_values(sip, agent, news)
 
 
 if __name__ == '__main__':

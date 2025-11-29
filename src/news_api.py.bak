@@ -16,46 +16,44 @@ class NewsAPIClient:
         self.newsapi_key = os.getenv('NEWSAPI_API_KEY', '')
         self.cryptopanic_key = os.getenv('CRYPTOPANIC_API_KEY', '')
         self.cache = {}
-    
-    def fetch_coinmarketcap_news(self, symbol: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
-        """
-        Fetch news from CoinMarketCap API.
-        Free tier: 10,000 requests/month (333/day)
-        Sign up: https://coinmarketcap.com/api/
-        """
-        if not self.coinmarketcap_key:
-            return pd.DataFrame()
-    
-        coin = symbol.split('-')[0]
-        news_list = []
-    
-        url = "https://pro-api.coinmarketcap.com/v1/content/latest"
-        headers = {
-            'X-CMC_PRO_API_KEY': self.coinmarketcap_key,
-            'Accept': 'application/json'
-        }
-        params = {
-            'symbol': coin,
-            'start': 1,
-            'limit': 100
-        }
-    
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                for item in data.get('data', []):
-                    pub_date = pd.to_datetime(item.get('releaseDate') or item.get('createdDate'))
-                    if start_date <= pub_date <= end_date:
-                        news_list.append({
-                            'date': pub_date,
-                            'title': item.get('title', ''),
-                            'body': item.get('subtitle', ''),
-                            'source': 'CoinMarketCap'
-                        })
-        except Exception as e:
-            print(f"CoinMarketCap API error: {e}")
-    
+        def fetch_coinmarketcap_news(self, symbol: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+            """
+            Fetch news from CoinMarketCap API.
+            Free tier: 10,000 requests/month (333/day)
+            Sign up: https://coinmarketcap.com/api/
+            """
+            if not self.coinmarketcap_key:
+                return pd.DataFrame()
+        
+            coin = symbol.split('-')[0]
+            news_list = []
+        
+            url = "https://pro-api.coinmarketcap.com/v1/content/latest"
+            headers = {
+                'X-CMC_PRO_API_KEY': self.coinmarketcap_key,
+                'Accept': 'application/json'
+            }
+            params = {
+                'symbol': coin,
+                'start': 1,
+                'limit': 100
+            }
+        
+            try:
+                response = requests.get(url, headers=headers, params=params, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    for item in data.get('data', []):
+                        pub_date = pd.to_datetime(item.get('releaseDate') or item.get('createdDate'))
+                        if start_date <= pub_date <= end_date:
+                            news_list.append({
+                                'date': pub_date,
+                                'title': item.get('title', ''),
+                                'source': 'CoinMarketCap'
+                            })
+            except Exception as e:
+                print(f"CoinMarketCap API error: {e}")
+        
         return pd.DataFrame(news_list) if news_list else pd.DataFrame()
     
     def fetch_cryptocompare_news(self, symbol: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
@@ -94,6 +92,7 @@ class NewsAPIClient:
         
         return pd.DataFrame(news_list) if news_list else pd.DataFrame()
     
+    
     def fetch_cryptopanic_news(self, symbol: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """
         Fetch news from CryptoPanic API.
@@ -131,7 +130,6 @@ class NewsAPIClient:
                         news_list.append({
                             'date': pd.to_datetime(item['published_at']),
                             'title': item['title'],
-                            'body': '',
                             'source': 'CryptoPanic'
                         })
                     self.cache[cache_key] = data.get('results', [])
@@ -183,7 +181,6 @@ class NewsAPIClient:
                         news_list.append({
                             'date': pd.to_datetime(item['publishedAt']),
                             'title': item['title'],
-                            'body': item.get('description', ''),
                             'source': 'NewsAPI'
                         })
                 time.sleep(1)  # Rate limiting
@@ -214,6 +211,7 @@ class NewsAPIClient:
         cc_news = self.fetch_cryptocompare_news(symbol, start_date, end_date)
         if not cc_news.empty:
             dfs.append(cc_news)
+        
         
         if self.cryptopanic_key:
             cp_news = self.fetch_cryptopanic_news(symbol, start_date, end_date)
@@ -248,7 +246,7 @@ def compute_news_sentiment_series(price_df: pd.DataFrame, symbol: str, use_real_
     """
     client = NewsAPIClient()
     
-    if use_real_news and (client.coinmarketcap_key or client.cryptocompare_key or client.cryptopanic_key or client.newsapi_key):
+    if use_real_news and (client.cryptopanic_key or client.newsapi_key):
         start = price_df.index[0].to_pydatetime()
         end = price_df.index[-1].to_pydatetime()
         
@@ -261,9 +259,8 @@ def compute_news_sentiment_series(price_df: pd.DataFrame, symbol: str, use_real_
         
         print(f"Fetched {len(news_df)} news articles, computing sentiment...")
         
-        # Compute sentiment per article (combine title + body)
-        news_df['text'] = news_df['title'] + ' ' + news_df['body'].fillna('')
-        news_df['sentiment'] = news_df['text'].apply(client.analyze_sentiment)
+        # Compute sentiment per article
+        news_df['sentiment'] = news_df['title'].apply(client.analyze_sentiment)
         
         # Aggregate daily sentiment (weighted average)
         news_df['date_only'] = news_df['date'].dt.date
@@ -283,7 +280,7 @@ def compute_news_sentiment_series(price_df: pd.DataFrame, symbol: str, use_real_
         return sentiment_series
     else:
         if use_real_news:
-            print("No API keys found. Set COINMARKETCAP_API_KEY, CRYPTOCOMPARE_API_KEY, CRYPTOPANIC_API_KEY, or NEWSAPI_API_KEY environment variables.")
+            print("No API keys found. Set CRYPTOPANIC_API_KEY or NEWSAPI_API_KEY environment variables.")
             print("Falling back to simulated sentiment based on price momentum.")
         return _simulate_sentiment_fallback(price_df)
 

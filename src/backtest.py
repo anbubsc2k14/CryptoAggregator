@@ -5,6 +5,8 @@ import numpy as np
 import yfinance as yf
 import pandas_ta as ta
 import matplotlib.pyplot as plt
+from textblob import TextBlob
+import random
 
 
 @dataclass
@@ -71,6 +73,87 @@ def simulate_agentic_dca(df: pd.DataFrame) -> PortfolioState:
     return PortfolioState(cash_invested=float(cash_invested), btc_accumulated=float(btc_accumulated.iloc[-1]), value_series=value_series)
 
 
+def simulate_news_sentiment(df: pd.DataFrame) -> pd.Series:
+    """
+    Simulate news sentiment based on price momentum.
+    In production, this would fetch real news headlines and analyze sentiment.
+    Positive sentiment correlates with price increases; negative with decreases.
+    Returns a sentiment score between -1 (very negative) and 1 (very positive).
+    """
+    # Calculate 7-day momentum as proxy for sentiment
+    returns = df['Adj_Close'].pct_change(7)
+    # Normalize to -1 to 1 range with some noise
+    sentiment = returns.clip(-0.15, 0.15) / 0.15
+    # Add random noise to simulate real news variability
+    noise = pd.Series([random.gauss(0, 0.2) for _ in range(len(df))], index=df.index)
+    sentiment = (sentiment + noise).clip(-1, 1)
+    return sentiment
+
+
+def simulate_news_based_dca(df: pd.DataFrame, monthly_budget: float = 100.0) -> PortfolioState:
+    """
+    News-based strategy: Buy on positive sentiment, hold on neutral, sell partial position on very negative.
+    - Sentiment > 0.3: Buy aggressively
+    - Sentiment 0 to 0.3: Buy normally
+    - Sentiment -0.3 to 0: Hold (no buy)
+    - Sentiment < -0.3: Sell 20% of holdings
+    Monthly budget is allocated across trading days based on sentiment signals.
+    """
+    df = df.copy()
+    df['Sentiment'] = simulate_news_sentiment(df)
+    df['Month'] = df.index.to_period('M')
+    
+    # Initialize buy amounts per day
+    df['Buy_USD'] = 0.0
+    df.loc[df['Sentiment'] > 0.3, 'Buy_USD'] = 2.0  # Aggressive buy weight
+    df.loc[(df['Sentiment'] >= 0) & (df['Sentiment'] <= 0.3), 'Buy_USD'] = 1.0  # Normal buy weight
+    
+    # Scale monthly to match budget
+    def scale_month(group: pd.DataFrame) -> pd.DataFrame:
+        total_weight = group['Buy_USD'].sum()
+        if total_weight <= 0:
+            # No signals, allocate to first day
+            if len(group) > 0:
+                group.at[group.index[0], 'Buy_USD'] = monthly_budget
+            return group
+        group['Buy_USD'] = (group['Buy_USD'] / total_weight) * monthly_budget
+        return group
+    
+    df = df.groupby('Month', group_keys=False).apply(scale_month, include_groups=False)
+    
+    # Simulate portfolio with sells
+    btc_holdings = 0.0
+    cash_invested_total = 0.0
+    cash_reserve = 0.0  # Cash from sells
+    portfolio_values = []
+    
+    for idx, row in df.iterrows():
+        # Buy
+        buy_amount = row['Buy_USD']
+        if buy_amount > 0:
+            btc_bought = buy_amount / row['Adj_Close']
+            btc_holdings += btc_bought
+            cash_invested_total += buy_amount
+        
+        # Sell on very negative sentiment
+        if row['Sentiment'] < -0.3 and btc_holdings > 0:
+            sell_fraction = 0.2
+            btc_to_sell = btc_holdings * sell_fraction
+            sell_value = btc_to_sell * row['Adj_Close']
+            btc_holdings -= btc_to_sell
+            cash_reserve += sell_value
+        
+        portfolio_values.append(btc_holdings * row['Adj_Close'] + cash_reserve)
+    
+    value_series = pd.Series(portfolio_values, index=df.index)
+    
+    return PortfolioState(
+        cash_invested=float(cash_invested_total),  # Net cash put in
+        btc_accumulated=float(btc_holdings),
+        value_series=value_series
+    )
+
+
 def max_drawdown(series: pd.Series) -> float:
     # Max drawdown as percentage
     roll_max = series.cummax()
@@ -78,7 +161,7 @@ def max_drawdown(series: pd.Series) -> float:
     return float(drawdown.min()) * 100.0
 
 
-def summary_table(sip: PortfolioState, agent: PortfolioState) -> pd.DataFrame:
+def summary_table(sip: PortfolioState, agent: PortfolioState, news: PortfolioState | None = None) -> pd.DataFrame:
     latest_sip = sip.value_series.iloc[-1]
     latest_agent = agent.value_series.iloc[-1]
 
@@ -89,20 +172,34 @@ def summary_table(sip: PortfolioState, agent: PortfolioState) -> pd.DataFrame:
     agent_mdd = max_drawdown(agent.value_series)
 
     data = {
-        'Strategy': ['Benchmark SIP', 'Agentic Smart DCA'],
+        'Strategy': ['Benchmark SIP', 'RSI-Based DCA'],
         'Total Invested ($)': [round(sip.cash_invested, 2), round(agent.cash_invested, 2)],
         'BTC Accumulated': [round(sip.btc_accumulated, 8), round(agent.btc_accumulated, 8)],
         'Current Value ($)': [round(latest_sip, 2), round(latest_agent, 2)],
         'ROI (%)': [round(sip_roi, 2), round(agent_roi, 2)],
         'Max Drawdown (%)': [round(sip_mdd, 2), round(agent_mdd, 2)],
     }
+    
+    if news is not None:
+        latest_news = news.value_series.iloc[-1]
+        news_roi = ((latest_news - news.cash_invested) / news.cash_invested) * 100.0 if news.cash_invested > 0 else 0.0
+        news_mdd = max_drawdown(news.value_series)
+        data['Strategy'].append('News Sentiment DCA')
+        data['Total Invested ($)'].append(round(news.cash_invested, 2))
+        data['BTC Accumulated'].append(round(news.btc_accumulated, 8))
+        data['Current Value ($)'].append(round(latest_news, 2))
+        data['ROI (%)'].append(round(news_roi, 2))
+        data['Max Drawdown (%)'].append(round(news_mdd, 2))
+    
     return pd.DataFrame(data)
 
 
-def plot_portfolio_values(sip: PortfolioState, agent: PortfolioState) -> None:
+def plot_portfolio_values(sip: PortfolioState, agent: PortfolioState, news: PortfolioState | None = None) -> None:
     plt.figure(figsize=(12, 6))
     plt.plot(sip.value_series.index, sip.value_series.values, label='Benchmark SIP', linewidth=1.5)
-    plt.plot(agent.value_series.index, agent.value_series.values, label='Agentic Smart DCA', linewidth=1.5)
+    plt.plot(agent.value_series.index, agent.value_series.values, label='RSI-Based DCA', linewidth=1.5)
+    if news is not None:
+        plt.plot(news.value_series.index, news.value_series.values, label='News Sentiment DCA', linewidth=1.5)
     plt.title('Portfolio Value Over Time (BTC-USD)')
     plt.xlabel('Date')
     plt.ylabel('Portfolio Value ($)')
@@ -116,7 +213,8 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
                  sip_amount: float = 100.0,
                  agent_buy_low: float = 150.0,
                  agent_buy_normal: float = 100.0,
-                 equal_monthly_budget: bool = False) -> tuple[pd.DataFrame, PortfolioState, PortfolioState]:
+                 equal_monthly_budget: bool = False,
+                 include_news_strategy: bool = False) -> tuple[pd.DataFrame, PortfolioState, PortfolioState, PortfolioState | None]:
     end = dt.date.today()
     start = end - dt.timedelta(days=int(years * 365 + 5))
 
@@ -148,7 +246,7 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
             scale = sip_amount / total
             group['Buy_USD'] = group['Buy_USD'] * scale
             return group
-        df_agent = df_agent.groupby('Month', group_keys=False).apply(scale_month)
+        df_agent = df_agent.groupby('Month', group_keys=False).apply(scale_month, include_groups=False)
 
     # Reuse simulate functions for consistency
     sip = simulate_sip(df, monthly_amount=sip_amount)
@@ -161,15 +259,20 @@ def run_backtest(symbol: str = 'BTC-USD', years: int = 10, rsi_length: int = 14,
         value_series=btc_accumulated * df_agent['Adj_Close']
     )
 
-    summary = summary_table(sip, agent)
-    return summary, sip, agent
+    # News-based strategy
+    news = None
+    if include_news_strategy:
+        news = simulate_news_based_dca(df, monthly_budget=sip_amount)
+    
+    summary = summary_table(sip, agent, news)
+    return summary, sip, agent, news
 
 
 def main():
-    summary, sip, agent = run_backtest(symbol='BTC-USD', years=10)
+    summary, sip, agent, news = run_backtest(symbol='BTC-USD', years=10, include_news_strategy=True)
     print('\nBacktest Summary (Last 10 Years)')
     print(summary.to_string(index=False))
-    plot_portfolio_values(sip, agent)
+    plot_portfolio_values(sip, agent, news)
 
 
 if __name__ == '__main__':

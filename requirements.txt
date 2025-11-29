@@ -4,3 +4,4 @@ pandas_ta>=0.3.14b0
 matplotlib>=3.8.0
 numpy>=1.26.0
 streamlit>=1.38.0
+textblob>=0.17.1
